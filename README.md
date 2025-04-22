@@ -43,7 +43,8 @@ hb = 6.582119570e-1
 
 ```
 
-Load the data
+Load the data\
+The example file "reseauOr.csv" can be found on the Github repository, at the following link : [SEMPO data folder](https://github.com/ibensoltane/SEMPO/tree/main/data)
 
 
 ```python
