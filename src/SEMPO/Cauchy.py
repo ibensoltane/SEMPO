@@ -20,7 +20,6 @@ def OriginalCauchyMethod(H0, W0, nmbMaxPoles=40, dWorigin=1e-3, phys=True,
         H1 = np.hstack([np.flip(H0[ids1]).conj(), H0[ids2]])
     H = H1[..., np.newaxis]
     nmbMaxPoles = min(nmbMaxPoles, W0.shape[0])
-    e0 = (np.abs(H0) ** 2).mean()
 
     # Set dQ and dP
     Mp = nmbMaxPoles
@@ -120,155 +119,6 @@ def OriginalCauchyMethod(H0, W0, nmbMaxPoles=40, dWorigin=1e-3, phys=True,
     return g0, p, z
 
 
-def CauchyMethod(H0, W0, nmbMaxPoles=40, dWorigin=1e-3, phys=True,
-                 useLogPrec=False, logPrec=15, diffZP=0, plotSingularValues=False, figID=11111):
-    # Adjust some variables
-    W1, H1 = None, None
-    if not phys:
-        W1, H1 = W0, H0
-    else:
-        ids1 = np.arange(0, W0.shape[0], 2)
-        ids2 = np.arange(1, W0.shape[0], 2)
-        W1 = np.hstack([-np.flip(W0[ids1]), W0[ids2]])
-        H1 = np.hstack([np.flip(H0[ids1]).conj(), H0[ids2]])
-    H = H1[..., np.newaxis]
-    nmbMaxPoles = min(nmbMaxPoles, W0.shape[0])
-    e0 = (np.abs(H0) ** 2).mean()
-
-    # Set dQ and dP
-    Mp = nmbMaxPoles
-    Mz = max(1, nmbMaxPoles - diffZP)
-
-    # First SVD to find the singular values
-    Wd = np.vander(W1, N=Mp + 1, increasing=True)
-    B = H * Wd
-    A = np.vander(W1, N=Mz + 1, increasing=True)
-    C = np.hstack([A, -B])
-    U, S, Vh = np.linalg.svd(C)
-
-    # Look at the log ratio of the singular values S and the max singular value, and the growth of S
-    yS = np.log10(S / np.max(S))
-    yDiffS = np.abs(yS[1:] - yS[:-1])
-
-    # Define the max rank using either the LogPrec or the growth stop point
-    rsMax = nmbMaxPoles
-    if useLogPrec:
-        rsMax = np.argwhere(yS > -logPrec)[-1, 0]
-        rsMax = max(rsMax, diffZP + 3)  # diffZP+3 = Mz:1 + Mp:1+diffZP + 2 - K:1
-    else:
-        rsMax = np.argwhere(yDiffS == 0)
-        if len(rsMax) > 0:
-            rsMax = rsMax[0, 0] + 1
-        else:
-            rsMax = np.argwhere(yS > -logPrec)[-1, 0] + 1
-        rsMax = max(rsMax, diffZP + 3)  # diffZP+3 = Mz:1 + Mp:1+diffZP + 2 - K:1
-
-    # Plot the singular values if you want...
-    if plotSingularValues:
-        fig = plt.figure(figID, figsize=[5, 4])
-        plt.clf()
-        fig.subplots_adjust(left=.16, bottom=.15, right=.85)
-        ax = fig.subplots(1)
-        ax.plot(np.arange(S.shape[0]) + 1, yS, color="black")
-        ax.scatter(x=np.arange(S.shape[0]) + 1, y=yS, s=7, color="blue", marker="x")
-        ax.set_xlabel("Index $i$ of singular value")
-        ax.set_ylabel(r"log[$\sigma_i / \sigma_{max}$]")
-        ax.axvline(rsMax, color="black", linestyle="--")
-        ax2 = ax.twinx()
-        ax2.plot(np.arange(S.shape[0] - 1) + 1, yDiffS, linestyle="--", color="red")
-        ax2.set_ylabel("Derivative approximation", color="red")
-        fig.show()
-
-    # Now start from that max rank and add poles and zeros until the error is low
-    g0n = []
-    zn = []
-    pn = []
-    Yn = []
-    error = []
-    rsArray = []
-    # rs = diffZP+3 + 30
-    if rsMax >= (diffZP + 3):
-        Mp0 = (rsMax + diffZP - 1) // 2
-        Mz0 = Mp - diffZP
-        if not (Mp0 + Mz0 + 1 == rsMax):
-            Mp0 = (rsMax + 1 + diffZP - 1) // 2
-            Mz0 = Mp0 - diffZP
-        A0 = np.vander(W1, N=Mz0 + 1, increasing=True)
-        Wd = np.vander(W1, N=Mp0 + 1, increasing=True)
-        B0 = H * Wd
-        C0 = np.hstack([A0, -B0])
-
-        dimMin = 3
-        dimMax = Mz0 - 1
-        for i in range(dimMin, dimMax):
-            g0 = None
-            zeros = None
-            poles = None
-            Hwpred = None
-            e = np.inf
-
-            Mz = i + 1
-            Mp = Mz + diffZP
-            rs = Mz + Mp + 3
-
-            dimC = np.hstack([np.arange(Mz + 1), np.arange(Mz0 + 1, Mz0 + 1 + Mp + 1)])
-            C = C0[:, dimC]
-
-            U, S, Vh = np.linalg.svd(C, full_matrices=False)
-            S[-1] = 0
-            C = np.dot(U * S, Vh)
-            A = C[:, :(Mz + 1)]
-            B = -C[:, (Mz + 1):]
-
-            Q, R1 = np.linalg.qr(A, mode="complete")
-            R11 = R1[:(Mz + 1), :(Mz + 1)]
-
-            R2 = -np.matmul(Q.T, B)
-            R21 = R2[:(Mz + 1), :]
-            R22 = R2[(Mz + 1):, :]
-
-            U, S, V = np.linalg.svd(R22)
-            b = V.conj().T[:, -1]
-            a = -np.matmul(np.linalg.inv(R11), np.matmul(R21, b))
-
-            g0 = np.abs(a[-1] / b[-1]) if phys else a[-1] / b[-1]
-            pa = np.polynomial.Polynomial(a)
-            pb = np.polynomial.Polynomial(b)
-            z = pa.roots()
-            p = pb.roots()
-
-            if (z.shape[0] > 0) and (p.shape[0] > 0):
-                zIm = z[np.abs(np.real(z)) < dWorigin]
-                zPairs = z[np.abs(np.real(z)) >= dWorigin]
-                if zPairs.shape[0] > 0:
-                    zPairs = zPairs[np.real(zPairs) > -dWorigin]
-
-                pIm = p[np.abs(np.real(p)) < dWorigin]
-                pPairs = p[np.abs(np.real(p)) >= dWorigin]
-                if pPairs.shape[0] > 0:
-                    pPairs = pPairs[np.real(pPairs) > -dWorigin]
-
-                zeros = np.hstack([-np.flip(zPairs).conj(), 1j * np.imag(zIm), zPairs]) if phys else z
-                poles = np.hstack([-np.flip(pPairs).conj(), 1j * np.imag(pIm), pPairs]) if phys else p
-                Hwpred = SPM.G_SZF(W0, g0, poles, zeros)
-                p, z = poles, zeros
-                e = np.abs((Hwpred - H0) ** 2).mean() / e0 * 100
-
-            rsArray.append(rs)
-            error.append(e)
-            g0n.append(g0)
-            zn.append(z)
-            pn.append(p)
-            Yn.append(Hwpred)
-
-    idMin = np.argmin(error)
-    g0 = g0n[idMin]
-    zeros = zn[idMin]
-    poles = pn[idMin]
-
-    return g0, poles, zeros
-
-
 def CauchyMethodOptZP(H0, W0, nmbMaxPoles=40, dWorigin=1e-3, phys=True,
                       stability=False, qStability=.1,
                       useLogPrec=False, logPrec=15, diffZPMax=5, plotSingularValues=False, figID=11111):
@@ -339,8 +189,7 @@ def CauchyMethodOptZP(H0, W0, nmbMaxPoles=40, dWorigin=1e-3, phys=True,
     Mzn = []
     Mpn = []
 
-    rsMax += 6
-    rsMax = min(rsMax, 2 * ((W1.shape[0] - 1) // 2))
+    rsMax = max(3, rsMax)
     if not (rsMax % 2):
         rsMax += 1
     Mp0 = rsMax // 2
@@ -350,8 +199,10 @@ def CauchyMethodOptZP(H0, W0, nmbMaxPoles=40, dWorigin=1e-3, phys=True,
     B0 = H * Wd
     C0 = np.hstack([A0, -B0])
 
-    for Mz in range(1, Mz0 + 1):
-        for Mp in range(Mz, Mp0 + 1):
+    for Mp in range(1, Mp0 + 1):
+        Mzmin = max(Mp - diffZPMax, 1)
+        Mzmax = min(Mp, Mz0 + 1)
+        for Mz in range(Mzmin, Mzmax):
             Mzn.append(Mz)
             Mpn.append(Mp)
 
